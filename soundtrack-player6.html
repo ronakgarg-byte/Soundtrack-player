@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soundtrack player</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700;800&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a1a33;
+    --panel: #11264a;
+    --line: #26406b;
+    --text: #eaf0fb;
+    --muted: #9fb2d3;
+    --accent: #ff5a7a;
+    --accent-ink: #2a0610;
+    --ok: #2dd4bf;
+    --err: #ffb4a8;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #eef3fb; --panel: #ffffff; --line: #c9d6ec; --text: #0e2040;
+      --muted: #4d6288; --accent: #e0305a; --accent-ink: #ffffff; --ok: #0f8f80; --err: #b3261e;
+      color-scheme: light;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 400 16px/1.5 "DM Sans", system-ui, sans-serif;
+    display: grid; place-items: center; padding: 24px;
+  }
+  main { width: min(560px, 100%); }
+  h1 {
+    font: 800 clamp(28px, 6vw, 40px)/1.05 "Bricolage Grotesque", system-ui, sans-serif;
+    letter-spacing: -0.02em; margin: 0 0 8px;
+  }
+  p.lead { margin: 0 0 24px; color: var(--muted); max-width: 46ch; }
+
+  .stage {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 20px;
+    padding: 20px; display: grid; gap: 18px;
+  }
+  .field { display: grid; gap: 8px; }
+  label { font-weight: 500; font-size: 14px; color: var(--muted); }
+  .row { display: flex; gap: 10px; }
+  input[type="text"] {
+    flex: 1; min-width: 0; padding: 14px 16px; border-radius: 12px;
+    border: 1px solid var(--line); background: transparent; color: var(--text);
+    font: inherit;
+  }
+  input::placeholder { color: var(--muted); opacity: .8; }
+  :focus-visible { outline: 3px solid var(--ok); outline-offset: 2px; }
+
+  .play {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 0 22px; border: 0; border-radius: 12px; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink);
+    font: 700 16px "Bricolage Grotesque", system-ui, sans-serif;
+    transition: transform .12s ease, filter .12s ease;
+  }
+  .play:hover { filter: brightness(1.08); }
+  .play:active { transform: scale(.97); }
+  .play svg { width: 16px; height: 16px; fill: currentColor; }
+
+  textarea, select {
+    padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+    background: transparent; color: var(--text); font: inherit; font-size: 14px;
+  }
+  textarea { width: 100%; resize: vertical; line-height: 1.5; }
+  select { flex: 0 1 190px; min-width: 0; }
+  select option { background: var(--panel); color: var(--text); }
+  .msg { min-height: 20px; font-size: 15px; font-weight: 500; color: var(--err); margin: 0; }
+  .msg:not(:empty) { padding: 10px 12px; border: 1px solid var(--err); border-radius: 10px; }
+
+  .player { display: none; gap: 12px; }
+  .player.on { display: grid; }
+  .frame-wrap { border-radius: 14px; overflow: hidden; background: #000; }
+  .frame-wrap.yt { aspect-ratio: 16 / 9; }
+  .frame-wrap iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .frame-wrap.sp iframe { height: 152px; }
+  .meta { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 14px; color: var(--muted); }
+  .badge { color: var(--ok); font-weight: 500; }
+  .stop {
+    background: transparent; color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; padding: 8px 14px; cursor: pointer; font: inherit; font-size: 14px;
+  }
+  .stop:hover { border-color: var(--muted); }
+
+  .recent { display: none; gap: 8px; }
+  .recent.on { display: grid; }
+  .recent h2 { font: 700 15px "Bricolage Grotesque", system-ui, sans-serif; margin: 0; }
+  .recent ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .recent button {
+    width: 100%; text-align: left; display: flex; justify-content: space-between; gap: 12px;
+    background: transparent; color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 12px; cursor: pointer; font: inherit; font-size: 14px;
+  }
+  .recent button:hover { border-color: var(--accent); }
+  .recent .src { color: var(--muted); }
+
+  .note { font-size: 13px; color: var(--muted); margin: 18px 0 0; }
+
+  /* Page mascot: a character that watches the cursor and reacts to a click */
+  .mascot {
+    position: fixed; right: 20px; bottom: 20px; z-index: 50;
+    width: 140px; height: 140px; cursor: pointer;
+    background-repeat: no-repeat; background-size: 300% 300%;
+    background-position: 50% 50%;
+    touch-action: manipulation; user-select: none; -webkit-user-drag: none;
+  }
+  .mascot.squash { animation: squash .22s ease-out; }
+  @keyframes squash { 40% { transform: scale(.88, .92); } }
+  .mascot-missing {
+    position: fixed; right: 20px; bottom: 20px; z-index: 50; max-width: 260px;
+    padding: 10px 12px; border: 1px solid var(--err); border-radius: 10px;
+    background: var(--panel); color: var(--err); font-size: 13px;
+  }
+  @media (prefers-reduced-motion: reduce) { .mascot.squash { animation: none; } }
+  @media (max-width: 420px) { .row { flex-direction: column; } .play { justify-content: center; padding: 14px 22px; } }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Play a soundtrack</h1>
+  <p class="lead">Press play and a random song from your list starts. Add your own Spotify or YouTube links below.</p>
+
+  <section class="stage" aria-label="Soundtrack player">
+    <div class="row">
+      <button class="play" id="playBtn" type="button">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.5v13l11-6.5z"/></svg>
+        Play random song
+      </button>
+      <select id="filter" aria-label="Pick songs from">
+        <option value="any">YouTube + Spotify</option>
+        <option value="yt">YouTube only</option>
+        <option value="sp">Spotify only</option>
+      </select>
+    </div>
+    <p class="msg" id="msg" role="alert"></p>
+
+    <div class="field">
+      <label for="pool">Your song list (one Spotify or YouTube link per line)</label>
+      <textarea id="pool" rows="7" spellcheck="false" placeholder="https://open.spotify.com/track/…
+https://open.spotify.com/playlist/…"></textarea>
+    </div>
+
+    <div class="player" id="player">
+      <div class="frame-wrap" id="frameWrap"></div>
+      <div class="meta">
+        <span>Now playing from <span class="badge" id="source"></span></span>
+        <button class="stop" id="stopBtn" type="button">Stop</button>
+      </div>
+    </div>
+
+    <div class="recent" id="recent">
+      <h2>Played in this session</h2>
+      <ul id="recentList"></ul>
+    </div>
+  </section>
+
+  <p class="note">Spotify songs start automatically after you press the button. Log in to Spotify in this browser to hear full songs; without a login Spotify plays only a 30-second preview.</p>
+</main>
+
+<script>
+(function () {
+  var pool = document.getElementById('pool');
+  var filter = document.getElementById('filter');
+  var lastSrc = null;
+  var spApi = null;
+  window.onSpotifyIframeApiReady = function (api) { spApi = api; };
+  var spScript = document.createElement('script');
+  spScript.src = 'https://open.spotify.com/embed/iframe-api/v1';
+  spScript.async = true;
+  document.head.appendChild(spScript);
+  var playBtn = document.getElementById('playBtn');
+  var stopBtn = document.getElementById('stopBtn');
+  var msg = document.getElementById('msg');
+  var player = document.getElementById('player');
+  var wrap = document.getElementById('frameWrap');
+  var sourceEl = document.getElementById('source');
+  var recent = document.getElementById('recent');
+  var recentList = document.getElementById('recentList');
+  var history = [];
+
+  // Your 5 starting songs. Paste each Spotify link inside quotes, separated by commas, e.g.
+  //   'https://open.spotify.com/track/XXXXXXXXXXXXXXXXXXXXXX',
+  var DEFAULT_SONGS = [
+    'https://open.spotify.com/track/2g20aO38HBLIpg6NbCrjE3',
+    'https://open.spotify.com/track/5ThyDv6aRVU8AH4vXQNldF',
+    'https://open.spotify.com/track/3FHl1QYu76zguwjqhqcglX',
+    'https://open.spotify.com/track/69EBg5Kl8SwvDfxFQ1aPNY'
+    // 5th song: add a comma after the line above, then paste its link here in quotes.
+  ];
+  pool.value = DEFAULT_SONGS.join('\n');
+
+  function parse(raw) {
+    raw = (raw || '').trim();
+    if (!raw) return null;
+
+    var uri = raw.match(/^spotify:(track|album|playlist|episode|show|artist):([A-Za-z0-9]+)$/);
+    if (uri) return spotify(uri[1], uri[2], raw);
+
+    var u;
+    try { u = new URL(/^https?:\/\//i.test(raw) ? raw : 'https://' + raw); } catch (e) { return null; }
+    var host = u.hostname.replace(/^www\./, '').replace(/^m\./, '');
+
+    if (host === 'open.spotify.com') {
+      var m = u.pathname.match(/\/(track|album|playlist|episode|show|artist)\/([A-Za-z0-9]+)/);
+      return m ? spotify(m[1], m[2], raw) : null;
+    }
+
+    if (host === 'youtube.com' || host === 'music.youtube.com' || host === 'youtu.be') {
+      var id = null, list = u.searchParams.get('list');
+      if (host === 'youtu.be') id = u.pathname.slice(1).split('/')[0];
+      else if (u.pathname === '/watch') id = u.searchParams.get('v');
+      else {
+        var p = u.pathname.match(/^\/(?:shorts|embed|live)\/([A-Za-z0-9_-]{11})/);
+        if (p) id = p[1];
+      }
+      if (id && /^[A-Za-z0-9_-]{11}$/.test(id)) {
+        var q = 'autoplay=1&rel=0&playsinline=1' + (list ? '&list=' + encodeURIComponent(list) : '');
+        return { kind: 'yt', source: 'YouTube', label: 'YouTube video ' + id,
+                 src: 'https://www.youtube.com/embed/' + id + '?' + q, raw: raw };
+      }
+      if (list) {
+        return { kind: 'yt', source: 'YouTube', label: 'YouTube playlist',
+                 src: 'https://www.youtube.com/embed/videoseries?autoplay=1&rel=0&playsinline=1&list=' + encodeURIComponent(list), raw: raw };
+      }
+    }
+    return null;
+  }
+
+  function spotify(type, id, raw) {
+    return { kind: 'sp', source: 'Spotify', label: 'Spotify ' + type,
+             uri: 'spotify:' + type + ':' + id,
+             src: 'https://open.spotify.com/embed/' + type + '/' + id + '?utm_source=generator', raw: raw };
+  }
+
+  function show(item) {
+    wrap.innerHTML = '';
+    wrap.className = 'frame-wrap ' + item.kind;
+    if (item.kind === 'sp' && spApi) {
+      var holder = document.createElement('div');
+      wrap.appendChild(holder);
+      spApi.createController(holder, { uri: item.uri, width: '100%', height: 152 }, function (c) {
+        c.addListener('ready', function () { c.play(); });
+      });
+      sourceEl.textContent = item.source;
+      player.classList.add('on');
+      return;
+    }
+    var f = document.createElement('iframe');
+    f.src = item.src;
+    f.title = item.label;
+    f.allow = 'autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture';
+    f.allowFullscreen = true;
+    f.loading = 'eager';
+    wrap.appendChild(f);
+    sourceEl.textContent = item.source;
+    player.classList.add('on');
+  }
+
+  function remember(item) {
+    for (var i = 0; i < history.length; i++) if (history[i].src === item.src) return;
+    history.unshift(item);
+    if (history.length > 8) history.pop();
+    recentList.innerHTML = '';
+    history.forEach(function (h) {
+      var li = document.createElement('li');
+      var b = document.createElement('button');
+      b.type = 'button';
+      var a = document.createElement('span'); a.textContent = h.label;
+      var s = document.createElement('span'); s.className = 'src'; s.textContent = h.source;
+      b.appendChild(a); b.appendChild(s);
+      b.addEventListener('click', function () { lastSrc = h.src; show(h); });
+      li.appendChild(b); recentList.appendChild(li);
+    });
+    recent.classList.add('on');
+  }
+
+  function go() {
+    msg.textContent = '';
+    var items = [], bad = 0;
+    pool.value.split(/\r?\n/).forEach(function (line) {
+      if (!line.trim()) return;
+      var it = parse(line);
+      if (it) items.push(it); else bad++;
+    });
+
+    var want = filter.value;
+    var matching = items.filter(function (it) { return want === 'any' || it.kind === want; });
+
+    if (!matching.length) {
+      msg.textContent = items.length
+        ? 'No ' + (want === 'yt' ? 'YouTube' : 'Spotify') + ' links in your list. Add some or switch the filter.'
+        : 'Add at least one Spotify or YouTube link to your list.';
+      return;
+    }
+
+    // Avoid repeating the last song when there is a choice.
+    var choices = matching.length > 1
+      ? matching.filter(function (it) { return it.src !== lastSrc; })
+      : matching;
+    var item = choices[Math.floor(Math.random() * choices.length)];
+    lastSrc = item.src;
+
+    show(item);
+    remember(item);
+    if (bad) msg.textContent = bad + ' line' + (bad > 1 ? 's' : '') + ' in your list couldn\u2019t be read and were skipped.';
+  }
+
+  playBtn.addEventListener('click', go);
+  stopBtn.addEventListener('click', function () {
+    wrap.innerHTML = '';
+    player.classList.remove('on');
+  });
+})();
+</script>
+
+<div class="mascot" id="mascot" role="img" aria-label="mascot" hidden></div>
+<script>
+(function () {
+  // Put the two sheets you download from the page-mascot demo in a "mascots" folder
+  // next to this file. The directions sheet is optional: without it the mascot shows a smile and still reacts to clicks.
+  var CONFIG = {
+    directions: 'mascots/afro-directions.webp',
+    reactions: 'mascots/afro-reactions.webp',
+    size: 140
+  };
+
+  var el = document.getElementById('mascot');
+  var finePointer = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Cell [row, col] on the 3x3 directions sheet for each of the 8 sectors, clockwise from "right".
+  var SECTORS = [[1,2],[2,2],[2,1],[2,0],[1,0],[0,0],[0,1],[0,2]];
+  var CENTER = [1, 1];
+  var timer = null;
+  var hasDir = true;
+
+  function cell(rc) {
+    el.style.backgroundPosition = (rc[1] * 50) + '% ' + (rc[0] * 50) + '%';
+  }
+  function showDirections(rc) {
+    el.style.backgroundImage = 'url("' + CONFIG.directions + '")';
+    cell(rc);
+  }
+
+  function fail() {
+    el.hidden = true;
+    var n = document.createElement('div');
+    n.className = 'mascot-missing';
+    n.textContent = 'Mascot images not found. Put ' + CONFIG.directions + ' and ' + CONFIG.reactions + ' next to this file.';
+    document.body.appendChild(n);
+  }
+
+  function idle() {
+    if (hasDir) { showDirections(CENTER); return; }
+    el.style.backgroundImage = 'url("' + CONFIG.reactions + '")';
+    cell([0, 0]);
+  }
+
+  function load(src, ok, bad) {
+    var img = new Image();
+    img.onload = ok;
+    img.onerror = bad;
+    img.src = src;
+  }
+
+  var pending = 2;
+  function ready() {
+    if (--pending) return;
+    el.style.width = el.style.height = CONFIG.size + 'px';
+    el.hidden = false;
+    idle();
+    start();
+  }
+  load(CONFIG.directions, ready, function () { hasDir = false; ready(); });
+  load(CONFIG.reactions, ready, fail);
+
+  function start() {
+    if (finePointer) {
+      window.addEventListener('pointermove', function (e) {
+        if (timer || !hasDir) return;           // keep the reaction face on screen
+        var r = el.getBoundingClientRect();
+        var dx = e.clientX - (r.left + r.width / 2);
+        var dy = e.clientY - (r.top + r.height / 2);
+        if (Math.hypot(dx, dy) < CONFIG.size * 0.6) { idle(); return; }   // dead zone
+        var sector = (Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) + 8) % 8;
+        showDirections(SECTORS[sector]);
+      }, { passive: true });
+    }
+
+    el.addEventListener('click', function () {
+      clearTimeout(timer);
+      var n = Math.floor(Math.random() * 9);
+      el.style.backgroundImage = 'url("' + CONFIG.reactions + '")';
+      cell([Math.floor(n / 3), n % 3]);
+      if (!reduceMotion) {
+        el.classList.remove('squash'); void el.offsetWidth; el.classList.add('squash');
+      }
+      timer = setTimeout(function () { timer = null; idle(); }, 500);
+    });
+  }
+})();
+</script>
+</body>
+</html>
