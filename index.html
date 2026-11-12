@@ -66,6 +66,15 @@
   .play:active { transform: scale(.97); }
   .play svg { width: 16px; height: 16px; fill: currentColor; }
 
+  .play .ico-eq { display: none; }
+  .play.is-playing .ico-play { display: none; }
+  .play.is-playing .ico-eq { display: block; }
+  .play .ico-eq rect { transform-box: fill-box; transform-origin: 50% 100%; animation: eq 0.9s ease-in-out infinite; }
+  .play .ico-eq rect:nth-child(2) { animation-delay: .2s; }
+  .play .ico-eq rect:nth-child(3) { animation-delay: .4s; }
+  @keyframes eq { 0%, 100% { transform: scaleY(.35); } 50% { transform: scaleY(1); } }
+  @media (prefers-reduced-motion: reduce) { .play .ico-eq rect { animation: none; } }
+
   textarea, select {
     padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
     background: transparent; color: var(--text); font: inherit; font-size: 14px;
@@ -132,8 +141,9 @@
   <section class="stage" aria-label="Soundtrack player">
     <div class="row">
       <button class="play" id="playBtn" type="button">
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.5v13l11-6.5z"/></svg>
-        Play random song
+        <svg class="ico-play" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.5v13l11-6.5z"/></svg>
+        <svg class="ico-eq" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2" width="3" height="12" rx="1"/><rect x="6.5" y="2" width="3" height="12" rx="1"/><rect x="11.5" y="2" width="3" height="12" rx="1"/></svg>
+        <span id="playLabel">Play random song</span>
       </button>
       <select id="filter" aria-label="Pick songs from">
         <option value="any">YouTube + Spotify</option>
@@ -186,6 +196,10 @@ https://open.spotify.com/playlist/…"></textarea>
   var recent = document.getElementById('recent');
   var recentList = document.getElementById('recentList');
   var history = [];
+  var titles = {};          // song names, filled in from Spotify / YouTube
+  var currentItem = null;
+  var ctrl = null;
+  var playLabel = document.getElementById('playLabel');
 
   // Your 5 starting songs. Paste each Spotify link inside quotes, separated by commas, e.g.
   //   'https://open.spotify.com/track/XXXXXXXXXXXXXXXXXXXXXX',
@@ -225,10 +239,12 @@ https://open.spotify.com/playlist/…"></textarea>
       if (id && /^[A-Za-z0-9_-]{11}$/.test(id)) {
         var q = 'autoplay=1&rel=0&playsinline=1' + (list ? '&list=' + encodeURIComponent(list) : '');
         return { kind: 'yt', source: 'YouTube', label: 'YouTube video ' + id,
+                 page: 'https://www.youtube.com/watch?v=' + id,
                  src: 'https://www.youtube.com/embed/' + id + '?' + q, raw: raw };
       }
       if (list) {
         return { kind: 'yt', source: 'YouTube', label: 'YouTube playlist',
+                 page: 'https://www.youtube.com/playlist?list=' + encodeURIComponent(list),
                  src: 'https://www.youtube.com/embed/videoseries?autoplay=1&rel=0&playsinline=1&list=' + encodeURIComponent(list), raw: raw };
       }
     }
@@ -238,20 +254,53 @@ https://open.spotify.com/playlist/…"></textarea>
   function spotify(type, id, raw) {
     return { kind: 'sp', source: 'Spotify', label: 'Spotify ' + type,
              uri: 'spotify:' + type + ':' + id,
+             page: 'https://open.spotify.com/' + type + '/' + id,
              src: 'https://open.spotify.com/embed/' + type + '/' + id + '?utm_source=generator', raw: raw };
+  }
+
+  function nowText(item) {
+    var t = titles[item.src];
+    return item.source + (t ? ' \u00b7 ' + t : '');
+  }
+
+  function setPlaying(on) {
+    playBtn.classList.toggle('is-playing', on);
+    playLabel.textContent = on ? 'Playing \u00b7 next random song' : 'Play random song';
+  }
+
+  function loadTitle(item) {
+    if (titles[item.src] || !item.page) return;
+    var url = (item.kind === 'sp'
+      ? 'https://open.spotify.com/oembed?url='
+      : 'https://www.youtube.com/oembed?format=json&url=') + encodeURIComponent(item.page);
+    fetch(url).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d || !d.title) return;
+      titles[item.src] = d.title;
+      renderRecent();
+      if (currentItem && currentItem.src === item.src) sourceEl.textContent = nowText(item);
+    }).catch(function () {});
   }
 
   function show(item) {
     wrap.innerHTML = '';
     wrap.className = 'frame-wrap ' + item.kind;
+    currentItem = item;
+    ctrl = null;
+    sourceEl.textContent = nowText(item);
+    player.classList.add('on');
+    setPlaying(true);
+    loadTitle(item);
+
     if (item.kind === 'sp' && spApi) {
       var holder = document.createElement('div');
       wrap.appendChild(holder);
       spApi.createController(holder, { uri: item.uri, width: '100%', height: 152 }, function (c) {
+        ctrl = c;
         c.addListener('ready', function () { c.play(); });
+        c.addListener('playback_update', function (e) {
+          if (ctrl === c && e && e.data) setPlaying(!e.data.isPaused);
+        });
       });
-      sourceEl.textContent = item.source;
-      player.classList.add('on');
       return;
     }
     var f = document.createElement('iframe');
@@ -261,26 +310,28 @@ https://open.spotify.com/playlist/…"></textarea>
     f.allowFullscreen = true;
     f.loading = 'eager';
     wrap.appendChild(f);
-    sourceEl.textContent = item.source;
-    player.classList.add('on');
+  }
+
+  function renderRecent() {
+    recentList.innerHTML = '';
+    history.forEach(function (h) {
+      var li = document.createElement('li');
+      var b = document.createElement('button');
+      b.type = 'button';
+      var a = document.createElement('span'); a.textContent = titles[h.src] || h.label;
+      var s = document.createElement('span'); s.className = 'src'; s.textContent = h.source;
+      b.appendChild(a); b.appendChild(s);
+      b.addEventListener('click', function () { lastSrc = h.src; show(h); });
+      li.appendChild(b); recentList.appendChild(li);
+    });
+    recent.classList.toggle('on', history.length > 0);
   }
 
   function remember(item) {
     for (var i = 0; i < history.length; i++) if (history[i].src === item.src) return;
     history.unshift(item);
     if (history.length > 8) history.pop();
-    recentList.innerHTML = '';
-    history.forEach(function (h) {
-      var li = document.createElement('li');
-      var b = document.createElement('button');
-      b.type = 'button';
-      var a = document.createElement('span'); a.textContent = h.label;
-      var s = document.createElement('span'); s.className = 'src'; s.textContent = h.source;
-      b.appendChild(a); b.appendChild(s);
-      b.addEventListener('click', function () { lastSrc = h.src; show(h); });
-      li.appendChild(b); recentList.appendChild(li);
-    });
-    recent.classList.add('on');
+    renderRecent();
   }
 
   function go() {
@@ -318,6 +369,9 @@ https://open.spotify.com/playlist/…"></textarea>
   stopBtn.addEventListener('click', function () {
     wrap.innerHTML = '';
     player.classList.remove('on');
+    currentItem = null;
+    ctrl = null;
+    setPlaying(false);
   });
 })();
 </script>
